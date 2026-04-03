@@ -1,0 +1,101 @@
+/* ─── 520 Love Journey — Global Styles ─── */
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800&display=swap');
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  font-family: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+  background-color: #fdf6f0;
+  color: #2d3436;
+}
+
+/* Scrollbar styling for level cards */
+::-webkit-scrollbar {
+  width: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 118, 117, 0.3);
+  border-radius: 4px;
+}
+
+/* Base input style */
+input {
+  font-family: 'Outfit', sans-serif;
+  border: 2px solid rgba(252, 182, 159, 0.7);
+  padding: 12px 20px;
+  border-radius: 16px;
+  outline: none;
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+  font-size: 1.05rem;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+input:focus {
+  border-color: #ff7675;
+  box-shadow: 0 0 0 4px rgba(255, 118, 117, 0.12);
+}
+
+/* Base button style */
+button {
+  cursor: pointer;
+  border: none;
+  font-family: 'Outfit', sans-serif;
+  font-weight: 600;
+  transition: transform 0.18s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+button:active {
+  transform: scale(0.95);
+}
+
+/* Prevent selection on interactive elements */
+button, input {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+input {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Focus ring for accessibility */
+button:focus-visible {
+  outline: 2px solid rgba(255, 118, 117, 0.6);
+  outline-offset: 3px;
+}
+
+/* Glass card utility class */
+.glass {
+  background: rgba(255, 255, 255, 0.76);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+  border: 1.5px solid rgba(255, 255, 255, 0.52);
+  box-shadow: 0 28px 72px rgba(0, 0, 0, 0.12), 0 1px 0 rgba(255, 255, 255, 0.8) inset;
+}
+
+/* Mobile-specific tweaks */
+@media (max-width: 400px) {
+  body {
+    font-size: 14px;
+  }
+}
+
+/* Prevent pull-to-refresh on mobile */
+html {
+  overscroll-behavior: none;
+}
