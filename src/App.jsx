@@ -164,7 +164,7 @@ function Level1({ onComplete }) {
           fontSize: "1.2rem",
         }}
         onChange={(e) =>
-          e.target.value.toLowerCase() === "adventure" && onComplete()
+          e.target.value.toLowerCase() === "LOVEU2" && onComplete()
         }
       />
     </>
@@ -359,7 +359,7 @@ function FinalLevel() {
             marginTop: "10px",
           }}
         >
-          HAPPY BIRTHDAY
+          HAPPY 520!
         </p>
       </motion.div>
     </div>
