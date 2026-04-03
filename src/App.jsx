@@ -1,25 +1,29 @@
 /**
- * 520 Love Journey — Upgraded Interactive Experience
- * ===================================================
- * MAJOR IMPROVEMENTS:
- * - Narrative arc: 初遇 → 相识 → 心动 → 爱你 → 永远
- * - Diverse interactions: password input, timing-based click, hover-discovery, rhythm game
- * - Both success & failure states for all levels (failure always positive & encouraging)
- * - Ambient floating particles, glassmorphism UI, layered depth
- * - Web Audio API sound effects (no external lib needed)
- * - Chapter transition screens between levels
- * - Easter eggs: type "520", click logo 5x, tap finale screen
- * - Spark burst & confetti on successes
- * - Fully mobile-responsive with 100dvh
+ * 520 Love Journey — Optimized v2
+ * ==================================
+ * WHAT'S NEW:
+ * ─────────────────────────────────────────────────────────────────
+ * [FIX]  Level 3: Two-tap 3D card flip for full mobile compatibility.
+ *        Tap 1 = flip reveal (rotateY 0→180). Tap 2 on same card = confirm.
+ * [NEW]  Background Music: HTML5 <audio> integrated in App root.
+ *        Starts on first user interaction (bypasses browser autoplay policy).
+ *        Replace the src placeholder with your music URL.
+ * [NEW]  AmbientParticles: Emoji-based (🌸✨💫) with parallax depth layers.
+ *        Larger emojis float closer & faster, smaller ones drift slowly.
+ * [EGG]  Level 1: Rainbow border pulse when "520" is typed in real-time.
+ * [EGG]  Level 2: Pitch rises on each star catch (C5 → E5 → G5 musical scale).
+ * [UX]   ChapterCard: Cinematic letterbox bars + blur-in title reveal.
+ * [CODE] useMemo for stable particle configs, cleaner canvas teardown.
+ * ─────────────────────────────────────────────────────────────────
  */
 
-import React, { useState, useEffect, useRef, useCallback } from "react";
-import { motion, AnimatePresence, useAnimation } from "framer-motion";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import confetti from "canvas-confetti";
 
-// ─────────────────────────────────────────────
-// 🎵 SOUND ENGINE  (Web Audio API — no library)
-// ─────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════
+// 🎵 SOUND ENGINE — Web Audio API (zero external deps)
+// ══════════════════════════════════════════════════════════════
 function useSoundEngine() {
   const ctxRef = useRef(null);
 
@@ -27,7 +31,6 @@ function useSoundEngine() {
     if (!ctxRef.current) {
       ctxRef.current = new (window.AudioContext || window.webkitAudioContext)();
     }
-    // Resume if suspended (autoplay policy)
     if (ctxRef.current.state === "suspended") ctxRef.current.resume();
     return ctxRef.current;
   };
@@ -61,12 +64,22 @@ function useSoundEngine() {
     playClick: () => tone(440, "sine", 0.08, 0.12),
     playHover: () => tone(880, "sine", 0.04, 0.07),
     playBeat: () => tone(330, "triangle", 0.1, 0.15),
+    // [NEW] Rising pitch per star catch: index 0→C5, 1→E5, 2→G5
+    playStarCatch: (n) => {
+      const notes = [523, 659, 784];
+      tone(notes[Math.min(n, notes.length - 1)], "sine", 0.18, 0.22);
+    },
+    // [NEW] Soft "card primed" chime for Level 3
+    playPrimed: () => {
+      tone(660, "sine", 0.06, 0.09);
+      setTimeout(() => tone(880, "sine", 0.05, 0.07), 60);
+    },
   };
 }
 
-// ─────────────────────────────────────────────
-// ✨ SPARK BURST  (radial dots explosion)
-// ─────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════
+// ✨ SPARK BURST — radial dot explosion on success
+// ══════════════════════════════════════════════════════════════
 function SparkBurst({ x, y, onDone }) {
   useEffect(() => {
     const t = setTimeout(onDone, 700);
@@ -75,13 +88,7 @@ function SparkBurst({ x, y, onDone }) {
 
   return (
     <div
-      style={{
-        position: "fixed",
-        left: x,
-        top: y,
-        pointerEvents: "none",
-        zIndex: 9999,
-      }}
+      style={{ position: "fixed", left: x, top: y, pointerEvents: "none", zIndex: 9999 }}
     >
       {Array.from({ length: 10 }).map((_, i) => {
         const angle = (i / 10) * 360;
@@ -90,8 +97,8 @@ function SparkBurst({ x, y, onDone }) {
             key={i}
             initial={{ x: 0, y: 0, scale: 0, opacity: 1 }}
             animate={{
-              x: Math.cos((angle * Math.PI) / 180) * 55,
-              y: Math.sin((angle * Math.PI) / 180) * 55,
+              x: Math.cos((angle * Math.PI) / 180) * 56,
+              y: Math.sin((angle * Math.PI) / 180) * 56,
               scale: [0, 1.2, 0],
               opacity: [1, 1, 0],
             }}
@@ -110,10 +117,44 @@ function SparkBurst({ x, y, onDone }) {
   );
 }
 
-// ─────────────────────────────────────────────
-// 🫧 AMBIENT FLOATING PARTICLES (background ambiance)
-// ─────────────────────────────────────────────
-function AmbientParticles({ colors }) {
+// ══════════════════════════════════════════════════════════════
+// 🌸 AMBIENT PARTICLES — emoji-based with depth parallax
+// [UPGRADED] Large emojis = close layer (fast, vivid)
+//            Small emojis = far layer (slow, blurred, subtle)
+// ══════════════════════════════════════════════════════════════
+
+// Per-level emoji palette
+const EMOJI_SETS = {
+  1: ["🌸", "✨", "🌷", "💫", "🌟", "🌺"],
+  2: ["⭐", "💫", "✨", "🌙", "🌠", "💎"],
+  3: ["💕", "🦋", "🌸", "✨", "🍬", "🌈"],
+  4: ["❤️", "💗", "💖", "💕", "🌹", "💓"],
+};
+
+function AmbientParticles({ level }) {
+  // Stable config per level — useMemo prevents re-randomising on every render
+  const particles = useMemo(
+    () => {
+      const set = EMOJI_SETS[level] || EMOJI_SETS[1];
+      return Array.from({ length: 16 }, (_, i) => {
+        const size = 10 + Math.random() * 18; // 10–28 px
+        const depth = (size - 10) / 18; // 0 (far/small) → 1 (close/large)
+        return {
+          id: i,
+          emoji: set[i % set.length],
+          startX: Math.random() * 96, // vw %
+          size,
+          depth,
+          duration: 14 - depth * 7, // far=14s, close=7s
+          delay: Math.random() * 10,
+          rotate: Math.random() * 36 - 18, // −18° → +18°
+          drift: (Math.random() - 0.5) * 9, // lateral vw drift
+        };
+      });
+    },
+    [level]
+  );
+
   return (
     <div
       style={{
@@ -124,47 +165,51 @@ function AmbientParticles({ colors }) {
         zIndex: 0,
       }}
     >
-      {Array.from({ length: 14 }).map((_, i) => (
+      {particles.map((p) => (
         <motion.div
-          key={i}
+          key={p.id}
           initial={{
-            x: `${Math.random() * 100}vw`,
+            x: `${p.startX}vw`,
             y: "108vh",
-            scale: 0,
             opacity: 0,
+            rotate: 0,
+            scale: 0,
           }}
           animate={{
-            y: "-8vh",
-            scale: [0, 1, 0.8, 0],
-            opacity: [0, 0.7, 0.7, 0],
-            x: `${Math.random() * 100}vw`,
+            y: "-10vh",
+            x: `${p.startX + p.drift}vw`,
+            opacity: [0, p.depth * 0.7 + 0.12, p.depth * 0.7 + 0.12, 0],
+            rotate: p.rotate,
+            scale: [0, 1, 1, 0],
           }}
           transition={{
-            duration: 5 + Math.random() * 5,
+            duration: p.duration,
             repeat: Infinity,
-            delay: Math.random() * 6,
-            ease: "easeOut",
+            delay: p.delay,
+            ease: "linear",
           }}
           style={{
             position: "absolute",
-            width: 6 + Math.random() * 10,
-            height: 6 + Math.random() * 10,
-            borderRadius: "50%",
-            background: colors[i % colors.length],
-            filter: "blur(1px)",
+            fontSize: `${p.size}px`,
+            filter: `blur(${(1 - p.depth) * 0.9}px)`,
+            userSelect: "none",
+            lineHeight: 1,
           }}
-        />
+        >
+          {p.emoji}
+        </motion.div>
       ))}
     </div>
   );
 }
 
-// ─────────────────────────────────────────────
-// 🎬 CHAPTER TRANSITION SCREEN
-// ─────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════
+// 🎬 CHAPTER CARD — cinematic letterbox transition
+// [UPGRADED] Letterbox bars + blur-fade title + expanding separator
+// ══════════════════════════════════════════════════════════════
 function ChapterCard({ chapter, title, subtitle, onDone }) {
   useEffect(() => {
-    const t = setTimeout(onDone, 2300);
+    const t = setTimeout(onDone, 2800);
     return () => clearTimeout(t);
   }, [onDone]);
 
@@ -173,91 +218,143 @@ function ChapterCard({ chapter, title, subtitle, onDone }) {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      transition={{ duration: 0.4 }}
+      transition={{ duration: 0.35 }}
       style={{
         position: "fixed",
         inset: 0,
-        background: "rgba(10, 8, 20, 0.92)",
+        background: "rgba(8, 5, 18, 0.95)",
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
         zIndex: 300,
-        backdropFilter: "blur(8px)",
+        backdropFilter: "blur(12px)",
+        WebkitBackdropFilter: "blur(12px)",
       }}
     >
+      {/* ── Cinematic letterbox bars (top & bottom) ── */}
+      <motion.div
+        initial={{ scaleY: 0 }}
+        animate={{ scaleY: 1 }}
+        transition={{ duration: 0.38, ease: "easeOut" }}
+        style={{
+          position: "absolute",
+          top: 0, left: 0, right: 0,
+          height: "clamp(40px, 10vh, 80px)",
+          background: "rgba(0,0,0,0.85)",
+          transformOrigin: "top",
+        }}
+      />
+      <motion.div
+        initial={{ scaleY: 0 }}
+        animate={{ scaleY: 1 }}
+        transition={{ duration: 0.38, ease: "easeOut" }}
+        style={{
+          position: "absolute",
+          bottom: 0, left: 0, right: 0,
+          height: "clamp(40px, 10vh, 80px)",
+          background: "rgba(0,0,0,0.85)",
+          transformOrigin: "bottom",
+        }}
+      />
+
+      {/* ── Chapter label ── */}
       <motion.span
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 0.45, y: 0 }}
-        transition={{ delay: 0.15 }}
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 0.4, y: 0 }}
+        transition={{ delay: 0.22, duration: 0.5 }}
         style={{
           color: "#fab1a0",
-          letterSpacing: "5px",
-          fontSize: "0.75rem",
+          letterSpacing: "6px",
+          fontSize: "0.72rem",
           textTransform: "uppercase",
-          marginBottom: "0.6rem",
+          marginBottom: "0.9rem",
         }}
       >
         {chapter}
       </motion.span>
 
+      {/* ── Main title with blur-in effect ── */}
       <motion.h1
-        initial={{ opacity: 0, y: 18 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.3, type: "spring", damping: 18 }}
+        initial={{ opacity: 0, y: 24, filter: "blur(10px)" }}
+        animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+        transition={{ delay: 0.36, duration: 0.6, ease: [0.25, 0.46, 0.45, 0.94] }}
         style={{
           color: "white",
-          fontSize: "clamp(2.5rem, 8vw, 3.5rem)",
+          fontSize: "clamp(2.6rem, 9vw, 4rem)",
           margin: 0,
           fontWeight: 800,
           letterSpacing: "-1px",
+          textShadow: "0 0 50px rgba(250,177,160,0.45)",
         }}
       >
         {title}
       </motion.h1>
 
+      {/* ── Subtitle ── */}
       <motion.p
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 0.55 }}
-        transition={{ delay: 0.55 }}
-        style={{
-          color: "#dfe6e9",
-          marginTop: "0.5rem",
-          letterSpacing: "3px",
-          fontSize: "0.9rem",
-        }}
+        initial={{ opacity: 0, letterSpacing: "1px" }}
+        animate={{ opacity: 0.5, letterSpacing: "4px" }}
+        transition={{ delay: 0.62, duration: 0.55 }}
+        style={{ color: "#dfe6e9", marginTop: "0.5rem", fontSize: "0.85rem" }}
       >
         {subtitle}
       </motion.p>
 
-      {/* Decorative line */}
-      <motion.div
-        initial={{ scaleX: 0 }}
-        animate={{ scaleX: 1 }}
-        transition={{ delay: 0.7, duration: 0.6 }}
+      {/* ── Decorative expanding separator ── */}
+      <div
         style={{
-          marginTop: "2rem",
-          width: "60px",
-          height: "2px",
-          background: "linear-gradient(90deg, #ff7675, #fd79a8)",
-          borderRadius: "2px",
+          display: "flex",
+          alignItems: "center",
+          gap: "10px",
+          marginTop: "1.8rem",
         }}
-      />
+      >
+        <motion.div
+          initial={{ scaleX: 0, opacity: 0 }}
+          animate={{ scaleX: 1, opacity: 1 }}
+          transition={{ delay: 0.78, duration: 0.5 }}
+          style={{
+            width: "44px",
+            height: "1px",
+            background: "linear-gradient(90deg, transparent, #ff7675)",
+            transformOrigin: "right",
+          }}
+        />
+        <motion.span
+          initial={{ opacity: 0, scale: 0 }}
+          animate={{ opacity: 0.9, scale: 1 }}
+          transition={{ delay: 0.9, type: "spring", stiffness: 300 }}
+          style={{ color: "#fd79a8", fontSize: "0.7rem" }}
+        >
+          ❤
+        </motion.span>
+        <motion.div
+          initial={{ scaleX: 0, opacity: 0 }}
+          animate={{ scaleX: 1, opacity: 1 }}
+          transition={{ delay: 0.78, duration: 0.5 }}
+          style={{
+            width: "44px",
+            height: "1px",
+            background: "linear-gradient(90deg, #ff7675, transparent)",
+            transformOrigin: "left",
+          }}
+        />
+      </div>
     </motion.div>
   );
 }
 
-// ─────────────────────────────────────────────
-// 📖 STORY METADATA
-// ─────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════
+// 📖 STORY / THEME CONSTANTS
+// ══════════════════════════════════════════════════════════════
 const STORY = {
-  2: { chapter: "Chapter II", title: "相识", subtitle: "Getting Close" },
-  3: { chapter: "Chapter III", title: "心动", subtitle: "That Feeling" },
-  4: { chapter: "Chapter IV", title: "爱你", subtitle: "Falling In Love" },
-  5: { chapter: "Finale", title: "永远", subtitle: "Forever & Always" },
+  2: { chapter: "Chapter II",  title: "相识", subtitle: "Getting Close"    },
+  3: { chapter: "Chapter III", title: "心动", subtitle: "That Feeling"     },
+  4: { chapter: "Chapter IV",  title: "爱你", subtitle: "Falling In Love"  },
+  5: { chapter: "Finale",      title: "永远", subtitle: "Forever & Always" },
 };
 
-// Background gradient per level
 const BG = {
   1: "linear-gradient(135deg, #ffecd2 0%, #fcb69f 100%)",
   2: "linear-gradient(135deg, #e0c3fc 0%, #8ec5fc 100%)",
@@ -266,38 +363,46 @@ const BG = {
   5: "linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%)",
 };
 
-// Ambient particle colors per level
-const PARTICLES = {
-  1: ["rgba(255,182,193,0.55)", "rgba(255,228,196,0.55)", "rgba(252,182,160,0.4)"],
-  2: ["rgba(162,155,254,0.5)", "rgba(142,197,252,0.5)", "rgba(253,203,110,0.4)"],
-  3: ["rgba(252,203,144,0.55)", "rgba(213,126,235,0.5)", "rgba(255,182,193,0.5)"],
-  4: ["rgba(255,154,158,0.55)", "rgba(254,207,239,0.6)", "rgba(255,182,193,0.5)"],
-};
-
-// ═══════════════════════════════════════════════════════════
-// LEVEL 1 — 初遇 · First Meeting
-// Interaction: Password input with letter-by-letter hint reveal
-// Easter egg: type "520" for a special message
-// ═══════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════
+// LEVEL 1 — 初遇 · Password Unlock
+// Easter egg A: type "520" → rainbow input glow + popup
+// Easter egg B: hints reveal letter-by-letter after 2+ fails
+// ══════════════════════════════════════════════════════════════
 const PASSWORD = "loveu";
 
-function Level1({ onComplete, sfx }) {
-  const [val, setVal] = useState("");
-  const [status, setStatus] = useState("idle"); // idle | error | success
-  const [attempts, setAttempts] = useState(0);
-  const [hintLen, setHintLen] = useState(0);
-  const [easteregg, setEasteregg] = useState(false);
-  const [sparks, setSparks] = useState([]);
-  const controls = useAnimation();
+// Rainbow border @keyframes injected via <style> tag when "520" is typed
+const RAINBOW_CSS = `
+  @keyframes rainbow-glow {
+    0%   { box-shadow: 0 0 14px #ff7675, 0 0 4px #ff7675; border-color: #ff7675; }
+    16%  { box-shadow: 0 0 14px #fdcb6e, 0 0 4px #fdcb6e; border-color: #fdcb6e; }
+    33%  { box-shadow: 0 0 14px #6c5ce7, 0 0 4px #6c5ce7; border-color: #6c5ce7; }
+    50%  { box-shadow: 0 0 14px #00b894, 0 0 4px #00b894; border-color: #00b894; }
+    66%  { box-shadow: 0 0 14px #74b9ff, 0 0 4px #74b9ff; border-color: #74b9ff; }
+    83%  { box-shadow: 0 0 14px #fd79a8, 0 0 4px #fd79a8; border-color: #fd79a8; }
+    100% { box-shadow: 0 0 14px #ff7675, 0 0 4px #ff7675; border-color: #ff7675; }
+  }
+  .rainbow-input { animation: rainbow-glow 1.6s linear infinite !important; }
+`;
 
+function Level1({ onComplete, sfx, onFirstInteraction }) {
+  const [val, setVal]             = useState("");
+  const [status, setStatus]       = useState("idle"); // idle | error | success
+  const [attempts, setAttempts]   = useState(0);
+  const [hintLen, setHintLen]     = useState(0);
+  const [easteregg, setEasteregg] = useState(false);
+  const [sparks, setSparks]       = useState([]);
+  // Shake animation is handled via Framer Motion animate prop on the wrapper div
+
+  // Detect "520" easter egg in real-time for rainbow glow
+  const isRainbow = val.toLowerCase().includes("520");
   const hint = PASSWORD.slice(0, hintLen);
 
   const handleSubmit = useCallback(
     (e) => {
       e.preventDefault();
+      onFirstInteraction?.(); // unlock music on first real interaction
       const input = val.trim().toLowerCase();
 
-      // 🥚 Easter egg: type 520
       if (input === "520") {
         setEasteregg(true);
         sfx.playSuccess();
@@ -322,16 +427,12 @@ function Level1({ onComplete, sfx }) {
         setAttempts(next);
         setStatus("error");
         sfx.playError();
-        controls.start({
-          x: [0, -10, 10, -7, 7, 0],
-          transition: { duration: 0.35 },
-        });
-        // Reveal one more hint letter after 2 failed attempts
+        // Shake handled by Framer Motion animate on the wrapper div below
         if (next >= 2) setHintLen((h) => Math.min(h + 1, PASSWORD.length));
         setTimeout(() => setStatus("idle"), 900);
       }
     },
-    [val, attempts, controls, onComplete, sfx]
+    [val, attempts, onComplete, onFirstInteraction, sfx]
   );
 
   const errorLines = [
@@ -344,6 +445,9 @@ function Level1({ onComplete, sfx }) {
 
   return (
     <div>
+      {/* Inject rainbow CSS only when needed */}
+      {isRainbow && <style>{RAINBOW_CSS}</style>}
+
       {sparks.map((s) => (
         <SparkBurst
           key={s.id}
@@ -353,36 +457,19 @@ function Level1({ onComplete, sfx }) {
         />
       ))}
 
-      {/* Chapter label */}
-      <motion.p
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 0.45 }}
-        style={styles.chapterLabel}
-      >
+      <motion.p initial={{ opacity: 0 }} animate={{ opacity: 0.45 }} style={S.chapterLabel}>
         Chapter I · 初遇
       </motion.p>
-
-      <motion.h2
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.1 }}
-        style={styles.heading}
-      >
+      <motion.h2 initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} style={S.heading}>
         嘿，是你吗？ 👋
       </motion.h2>
-
-      <motion.p
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ delay: 0.2 }}
-        style={styles.subtext}
-      >
+      <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2 }} style={S.subtext}>
         每个故事都有一个开始。
         <br />
         输入那个只有你知道的密语 ✨
       </motion.p>
 
-      {/* 🥚 Easter egg reveal */}
+      {/* Easter egg banner */}
       <AnimatePresence>
         {easteregg && (
           <motion.div
@@ -402,18 +489,27 @@ function Level1({ onComplete, sfx }) {
             🎉 <b>发现彩蛋！</b>
             <br />
             <span style={{ fontSize: "0.82rem" }}>
-              你真的好细心 💕 继续输入真正的密语哦~
+              可爱的猪宝宝520快乐 💕 继续输入真正的密语哦~
             </span>
           </motion.div>
         )}
       </AnimatePresence>
 
       <form onSubmit={handleSubmit} style={{ marginTop: "0.5rem" }}>
-        <motion.div animate={controls}>
+        {/* Shake wrapper */}
+        <motion.div
+          animate={status === "error" ? { x: [0, -10, 10, -7, 7, 0] } : { x: 0 }}
+          transition={{ duration: 0.35 }}
+        >
+          {/*
+            [EASTER EGG] Rainbow border glow fires when user types "520".
+            The .rainbow-input CSS class is injected above only when active.
+          */}
           <input
             autoFocus
             placeholder="输入密语..."
             value={val}
+            className={isRainbow ? "rainbow-input" : ""}
             onChange={(e) => {
               setVal(e.target.value);
               setEasteregg(false);
@@ -423,11 +519,7 @@ function Level1({ onComplete, sfx }) {
               padding: "13px 18px",
               borderRadius: "16px",
               border: `2.5px solid ${
-                status === "error"
-                  ? "#ff7675"
-                  : status === "success"
-                  ? "#00b894"
-                  : "#fcb69f"
+                status === "error" ? "#ff7675" : status === "success" ? "#00b894" : "#fcb69f"
               }`,
               background: "rgba(255,255,255,0.92)",
               fontSize: "1.1rem",
@@ -435,17 +527,14 @@ function Level1({ onComplete, sfx }) {
               outline: "none",
               display: "block",
               margin: "0 auto",
-              boxShadow:
-                status === "success"
-                  ? "0 0 18px rgba(0,184,148,0.3)"
-                  : "0 2px 12px rgba(0,0,0,0.06)",
+              boxShadow: status === "success" ? "0 0 18px rgba(0,184,148,0.3)" : "0 2px 12px rgba(0,0,0,0.06)",
               transition: "border-color 0.3s, box-shadow 0.3s",
               fontFamily: "inherit",
             }}
           />
         </motion.div>
 
-        {/* Hint letter-by-letter reveal */}
+        {/* Progressive hint reveal */}
         <AnimatePresence>
           {hintLen > 0 && (
             <motion.div
@@ -466,16 +555,14 @@ function Level1({ onComplete, sfx }) {
                       {c.toUpperCase()}
                     </motion.span>
                   ))}
-                  <span style={{ opacity: 0.25 }}>
-                    {"_".repeat(PASSWORD.length - hintLen)}
-                  </span>
+                  <span style={{ opacity: 0.22 }}>{"_".repeat(PASSWORD.length - hintLen)}</span>
                 </b>
               </p>
             </motion.div>
           )}
         </AnimatePresence>
 
-        {/* Error feedback */}
+        {/* Error line */}
         <AnimatePresence>
           {status === "error" && (
             <motion.p
@@ -491,10 +578,7 @@ function Level1({ onComplete, sfx }) {
 
         <motion.button
           type="submit"
-          whileHover={{
-            scale: 1.06,
-            boxShadow: "0 10px 28px rgba(255,107,107,0.45)",
-          }}
+          whileHover={{ scale: 1.06, boxShadow: "0 10px 28px rgba(255,107,107,0.45)" }}
           whileTap={{ scale: 0.94 }}
           onClick={() => sfx.playClick()}
           style={{
@@ -521,11 +605,10 @@ function Level1({ onComplete, sfx }) {
   );
 }
 
-// ═══════════════════════════════════════════════════════════
-// LEVEL 2 — 相识 · Getting Close
-// Interaction: Stars float and randomly glow — click 3 while they shine
-// Failure: miss → star escapes to new spot + cute message
-// ═══════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════
+// LEVEL 2 — 相识 · Star Catching (timing-based)
+// [NEW] Each catch plays a rising musical note (C5 → E5 → G5)
+// ══════════════════════════════════════════════════════════════
 const NEEDED_STARS = 3;
 
 function Level2({ onComplete, sfx }) {
@@ -539,10 +622,10 @@ function Level2({ onComplete, sfx }) {
     }))
   );
   const [caught, setCaught] = useState(0);
-  const [missed, setMissed] = useState(0);
-  const [sparks, setSparks] = useState([]);
+  const [missed, setMissed]   = useState(0);
+  const [sparks, setSparks]   = useState([]);
 
-  // Randomly toggle glow on each star independently
+  // Each star toggles its own glow on an independent interval
   useEffect(() => {
     const timers = stars.map((_, i) =>
       setInterval(
@@ -556,13 +639,13 @@ function Level2({ onComplete, sfx }) {
       )
     );
     return () => timers.forEach(clearInterval);
-  }, []); // eslint-disable-line
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleStar = (star, e) => {
     if (star.caught) return;
     if (star.glowing) {
-      // ✅ Caught!
-      sfx.playClick();
+      // ✅ Caught! — [NEW] rising pitch based on how many already caught
+      sfx.playStarCatch(caught);
       const r = e.currentTarget.getBoundingClientRect();
       setSparks((s) => [
         ...s,
@@ -578,7 +661,7 @@ function Level2({ onComplete, sfx }) {
         setTimeout(onComplete, 900);
       }
     } else {
-      // ❌ Missed — star bounces to new position
+      // ❌ Miss — star bounces to new position
       sfx.playError();
       setMissed((m) => m + 1);
       setStars((p) =>
@@ -608,15 +691,13 @@ function Level2({ onComplete, sfx }) {
         />
       ))}
 
-      <motion.p initial={{ opacity: 0 }} animate={{ opacity: 0.45 }} style={styles.chapterLabel}>
+      <motion.p initial={{ opacity: 0 }} animate={{ opacity: 0.45 }} style={S.chapterLabel}>
         Chapter II · 相识
       </motion.p>
-
-      <motion.h2 initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} style={styles.heading}>
+      <motion.h2 initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} style={S.heading}>
         捕捉闪光 ✨
       </motion.h2>
-
-      <p style={{ ...styles.subtext, marginBottom: "1rem" }}>
+      <p style={{ ...S.subtext, marginBottom: "1rem" }}>
         等星星发光的瞬间，点击抓住它！
         <br />
         <span style={{ color: "#a29bfe", fontWeight: 600 }}>
@@ -629,8 +710,7 @@ function Level2({ onComplete, sfx }) {
         style={{
           position: "relative",
           height: "155px",
-          background:
-            "linear-gradient(135deg, rgba(162,155,254,0.12), rgba(253,203,110,0.08))",
+          background: "linear-gradient(135deg, rgba(162,155,254,0.12), rgba(253,203,110,0.08))",
           borderRadius: "20px",
           overflow: "hidden",
           border: "1.5px solid rgba(162,155,254,0.18)",
@@ -652,7 +732,6 @@ function Level2({ onComplete, sfx }) {
                 ? { duration: 0.45 }
                 : { duration: 0.55, repeat: star.glowing ? Infinity : 0 }
             }
-            onHoverStart={() => star.glowing && !star.caught && sfx.playHover()}
             style={{
               position: "absolute",
               left: `${star.x}%`,
@@ -670,6 +749,7 @@ function Level2({ onComplete, sfx }) {
                 : "none",
               transition: "filter 0.3s",
               userSelect: "none",
+              touchAction: "manipulation",
             }}
           >
             {star.caught ? "💫" : star.glowing ? "⭐" : "✦"}
@@ -677,7 +757,7 @@ function Level2({ onComplete, sfx }) {
         ))}
       </div>
 
-      {/* Progress bar */}
+      {/* Progress dots */}
       <div style={{ display: "flex", gap: "10px", justifyContent: "center", marginTop: "1rem" }}>
         {Array.from({ length: NEEDED_STARS }).map((_, i) => (
           <motion.div
@@ -696,7 +776,6 @@ function Level2({ onComplete, sfx }) {
         ))}
       </div>
 
-      {/* Miss feedback */}
       <AnimatePresence>
         {missed > 0 && caught < NEEDED_STARS && (
           <motion.p
@@ -724,58 +803,205 @@ function Level2({ onComplete, sfx }) {
   );
 }
 
-// ═══════════════════════════════════════════════════════════
-// LEVEL 3 — 心动 · That Feeling
-// Interaction: Hover to reveal hidden cards, then choose the right word
-// Failure: wrong card → bounces + contextual message
-// ═══════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════
+// LEVEL 3 — 心动 · Card Discovery (TWO-TAP 3D FLIP)
+//
+// [MOBILE FIX] Replaces hover-based reveal with a two-tap interaction:
+//   Tap 1 on any card  → 3D rotateY flip reveals the word (primes the card)
+//   Tap 2 on primed card → confirms the selection
+//   Tap a different card → re-primes that card instead (no deselect penalty)
+//
+// FlipCard renders two faces with backface-visibility hidden:
+//   Face A (front): emoji + "TAP" hint      — visible at rotateY 0°
+//   Face B (back) : emoji + word + confirm  — visible at rotateY 180°
+// ══════════════════════════════════════════════════════════════
 const CARDS = [
   { id: "a", emoji: "🌸", word: "喜欢", right: false, wrongMsg: "喜欢是开始，但还不够深 🌸" },
   { id: "b", emoji: "🌙", word: "迷恋", right: false, wrongMsg: "迷恋有些短暂，我想要更久的 🌙" },
   { id: "c", emoji: "💫", word: "心动", right: false, wrongMsg: "心动只是一瞬，我们已经超越了 💫" },
-  { id: "d", emoji: "❤️", word: "爱你", right: true, wrongMsg: "" },
+  { id: "d", emoji: "❤️", word: "爱你", right: true,  wrongMsg: "" },
   { id: "e", emoji: "🌊", word: "想你", right: false, wrongMsg: "想你是因为... 你有答案了吗？ 🌊" },
   { id: "f", emoji: "🦋", word: "永远", right: false, wrongMsg: "永远么... 先找到那颗最重要的 🦋" },
 ];
 
+/** Single 3D flip card. Uses CSS preserve-3d so it works on all touch devices. */
+function FlipCard({ card, isFlipped, isPending, isChosen, status, onTap }) {
+  const isWrong = isChosen && status === "error";
+  const isRight = isChosen && status === "success";
+
+  return (
+    /*
+     * Perspective must live on a *parent* element (not the rotating element itself)
+     * for the 3D effect to render correctly in all browsers, including iOS Safari.
+     */
+    <div
+      onClick={onTap}
+      style={{
+        perspective: "700px",
+        cursor: "pointer",
+        userSelect: "none",
+        touchAction: "manipulation", // prevents 300ms delay on mobile
+        height: "84px",
+      }}
+    >
+      <motion.div
+        animate={{
+          rotateY: isFlipped ? 180 : 0,
+          scale:   isPending && !isChosen ? 1.04 : 1,
+          x:       isWrong ? [0, -9, 9, -6, 6, 0] : 0,
+        }}
+        transition={{
+          rotateY: { duration: 0.52, ease: [0.645, 0.045, 0.355, 1.0] }, // easeInOutCubic
+          scale:   { duration: 0.2 },
+          x:       { duration: 0.36 },
+        }}
+        style={{
+          width: "100%",
+          height: "100%",
+          position: "relative",
+          transformStyle: "preserve-3d",
+          WebkitTransformStyle: "preserve-3d",
+        }}
+      >
+        {/* ── FACE A: emoji + "TAP" hint (shown before flip) ── */}
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            backfaceVisibility: "hidden",
+            WebkitBackfaceVisibility: "hidden",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "4px",
+            background:
+              "linear-gradient(135deg, rgba(162,155,254,0.18), rgba(253,121,168,0.18))",
+            borderRadius: "15px",
+            border: "2px solid rgba(255,255,255,0.4)",
+          }}
+        >
+          <span style={{ fontSize: "1.6rem" }}>{card.emoji}</span>
+          <span
+            style={{
+              fontSize: "0.56rem",
+              color: "rgba(178,190,195,0.8)",
+              letterSpacing: "1px",
+              textTransform: "uppercase",
+            }}
+          >
+            Tap
+          </span>
+        </div>
+
+        {/* ── FACE B: word + confirm cue (shown after flip) ── */}
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            backfaceVisibility: "hidden",
+            WebkitBackfaceVisibility: "hidden",
+            /* Pre-rotate so it faces viewer when the card is at 180° */
+            transform: "rotateY(180deg)",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "3px",
+            background: isRight
+              ? "linear-gradient(135deg, #ff7675, #fd79a8)"
+              : "rgba(255,255,255,0.92)",
+            borderRadius: "15px",
+            border: isPending && !isChosen
+              ? "2px solid #ff7675"
+              : isRight
+              ? "2px solid transparent"
+              : isWrong
+              ? "2px solid rgba(255,118,117,0.5)"
+              : "2px solid rgba(255,255,255,0.5)",
+            boxShadow:
+              isPending && !isChosen
+                ? "0 0 18px rgba(255,118,117,0.38), inset 0 0 0 1px rgba(255,118,117,0.18)"
+                : isRight
+                ? "0 0 28px rgba(255,118,117,0.55)"
+                : "none",
+            transition: "box-shadow 0.2s, border-color 0.2s, background 0.2s",
+          }}
+        >
+          <span style={{ fontSize: "1.2rem" }}>{card.emoji}</span>
+          <span
+            style={{
+              fontSize: "0.88rem",
+              fontWeight: 700,
+              color: isRight ? "white" : "#2d3436",
+            }}
+          >
+            {card.word}
+          </span>
+
+          {/* Pulsing "TAP AGAIN" cue when this card is primed */}
+          {isPending && !isChosen && (
+            <motion.span
+              animate={{ opacity: [0.5, 1, 0.5] }}
+              transition={{ repeat: Infinity, duration: 1.1 }}
+              style={{ fontSize: "0.56rem", color: "#ff7675", letterSpacing: "0.8px", textTransform: "uppercase" }}
+            >
+              Tap again ✓
+            </motion.span>
+          )}
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
 function Level3({ onComplete, sfx }) {
-  const [revealed, setRevealed] = useState(new Set());
-  const [chosen, setChosen] = useState(null);
-  const [status, setStatus] = useState("idle"); // idle | error | success
-  const [sparks, setSparks] = useState([]);
-  const [errorMsg, setErrorMsg] = useState("");
+  const [flipped, setFlipped]       = useState(new Set()); // card IDs that have been flipped
+  const [pendingCard, setPending]   = useState(null);       // card primed for confirm
+  const [chosen, setChosen]         = useState(null);
+  const [status, setStatus]         = useState("idle");     // idle | error | success
+  const [sparks, setSparks]         = useState([]);
+  const [errorMsg, setErrorMsg]     = useState("");
 
-  const handleHover = (id) => {
-    if (!revealed.has(id)) {
-      setRevealed((prev) => new Set([...prev, id]));
-      sfx.playHover();
-    }
-  };
-
-  const handleChoose = (card, e) => {
+  const handleTap = useCallback((card, e) => {
     if (status !== "idle") return;
-    setChosen(card.id);
 
-    if (card.right) {
-      setStatus("success");
-      sfx.playSuccess();
-      const r = e.currentTarget.getBoundingClientRect();
-      setSparks((s) => [
-        ...s,
-        { id: Date.now(), x: r.left + r.width / 2, y: r.top + r.height / 2 },
-      ]);
-      setTimeout(onComplete, 1100);
+    if (!flipped.has(card.id)) {
+      // ── FIRST TAP: flip card + prime it ──────────────────────
+      setFlipped((prev) => new Set([...prev, card.id]));
+      setPending(card.id);
+      sfx.playPrimed();
+    } else if (pendingCard === card.id) {
+      // ── SECOND TAP on the same card: CONFIRM selection ───────
+      setChosen(card.id);
+
+      if (card.right) {
+        setStatus("success");
+        sfx.playSuccess();
+        const r = e.currentTarget.closest("[data-card]")?.getBoundingClientRect()
+          ?? e.currentTarget.getBoundingClientRect();
+        setSparks((s) => [
+          ...s,
+          { id: Date.now(), x: r.left + r.width / 2, y: r.top + r.height / 2 },
+        ]);
+        setTimeout(onComplete, 1100);
+      } else {
+        setStatus("error");
+        setErrorMsg(card.wrongMsg);
+        sfx.playError();
+        setTimeout(() => {
+          setStatus("idle");
+          setChosen(null);
+          setErrorMsg("");
+          setPending(null);
+        }, 1400);
+      }
     } else {
-      setStatus("error");
-      setErrorMsg(card.wrongMsg);
-      sfx.playError();
-      setTimeout(() => {
-        setStatus("idle");
-        setChosen(null);
-        setErrorMsg("");
-      }, 1300);
+      // ── TAP on a different already-flipped card: re-prime it ─
+      setPending(card.id);
+      sfx.playPrimed();
     }
-  };
+  }, [flipped, pendingCard, status, onComplete, sfx]);
 
   return (
     <div>
@@ -788,93 +1014,37 @@ function Level3({ onComplete, sfx }) {
         />
       ))}
 
-      <motion.p initial={{ opacity: 0 }} animate={{ opacity: 0.45 }} style={styles.chapterLabel}>
+      <motion.p initial={{ opacity: 0 }} animate={{ opacity: 0.45 }} style={S.chapterLabel}>
         Chapter III · 心动
       </motion.p>
-
-      <motion.h2 initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} style={styles.heading}>
+      <motion.h2 initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} style={S.heading}>
         寻找那个词 💝
       </motion.h2>
-
-      <p style={{ ...styles.subtext, marginBottom: "1.1rem" }}>
-        悬停揭开卡片，找到最能代表我们的那一个
+      <p style={{ ...S.subtext, marginBottom: "1.1rem" }}>
+        翻开卡片 → 再次点击确认
+        <br />
+        <span style={{ color: "#a29bfe", fontSize: "0.8rem" }}>
+          找到最能代表我们的那一个
+        </span>
       </p>
 
+      {/* Card grid — each cell wraps a FlipCard */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "9px" }}>
-        {CARDS.map((card) => {
-          const isRev = revealed.has(card.id);
-          const isChosen = chosen === card.id;
-          const isWrong = isChosen && status === "error";
-          const isRight = isChosen && status === "success";
-
-          return (
-            <motion.button
-              key={card.id}
-              onHoverStart={() => handleHover(card.id)}
-              onClick={(e) => handleChoose(card, e)}
-              whileHover={{ scale: 1.07, y: -3 }}
-              whileTap={{ scale: 0.93 }}
-              animate={
-                isWrong
-                  ? { x: [0, -9, 9, -6, 6, 0], transition: { duration: 0.38 } }
-                  : isRight
-                  ? {
-                      scale: [1, 1.15, 1],
-                      boxShadow: [
-                        "0 0 0 rgba(255,107,107,0)",
-                        "0 0 30px rgba(255,107,107,0.6)",
-                        "0 0 20px rgba(255,107,107,0.4)",
-                      ],
-                    }
-                  : {}
-              }
-              style={{
-                background: isRight
-                  ? "linear-gradient(135deg,#ff7675,#fd79a8)"
-                  : isWrong
-                  ? "rgba(255,118,117,0.12)"
-                  : isRev
-                  ? "rgba(255,255,255,0.92)"
-                  : "linear-gradient(135deg,rgba(162,155,254,0.2),rgba(253,121,168,0.2))",
-                borderRadius: "15px",
-                padding: "14px 6px",
-                border: isRight
-                  ? "2px solid #ff7675"
-                  : isWrong
-                  ? "2px solid rgba(255,118,117,0.5)"
-                  : "2px solid rgba(255,255,255,0.45)",
-                backdropFilter: "blur(5px)",
-                cursor: "pointer",
-                minHeight: "70px",
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: "4px",
-                fontFamily: "inherit",
-              }}
-            >
-              <span style={{ fontSize: "1.5rem" }}>{card.emoji}</span>
-              <AnimatePresence>
-                {isRev && (
-                  <motion.span
-                    initial={{ opacity: 0, y: 4 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    style={{
-                      fontSize: "0.82rem",
-                      fontWeight: 700,
-                      color: isRight ? "white" : "#2d3436",
-                    }}
-                  >
-                    {card.word}
-                  </motion.span>
-                )}
-              </AnimatePresence>
-            </motion.button>
-          );
-        })}
+        {CARDS.map((card) => (
+          <div key={card.id} data-card>
+            <FlipCard
+              card={card}
+              isFlipped={flipped.has(card.id)}
+              isPending={pendingCard === card.id}
+              isChosen={chosen === card.id}
+              status={status}
+              onTap={(e) => handleTap(card, e)}
+            />
+          </div>
+        ))}
       </div>
 
+      {/* Feedback messages */}
       <AnimatePresence>
         {status === "error" && errorMsg && (
           <motion.p
@@ -888,73 +1058,76 @@ function Level3({ onComplete, sfx }) {
         )}
       </AnimatePresence>
 
-      {revealed.size < 3 && (
+      {/* Contextual hints */}
+      {!pendingCard && flipped.size === 0 && (
         <motion.p
           animate={{ opacity: [0.3, 0.65, 0.3] }}
           transition={{ repeat: Infinity, duration: 2.5 }}
           style={{ color: "#b2bec3", fontSize: "0.78rem", marginTop: "0.75rem" }}
         >
-          💡 先悬停卡片揭开它们...
+          💡 点击卡片翻开...
+        </motion.p>
+      )}
+      {pendingCard && status === "idle" && (
+        <motion.p
+          initial={{ opacity: 0, y: 4 }}
+          animate={{ opacity: 1, y: 0 }}
+          style={{ color: "#ff7675", fontSize: "0.82rem", marginTop: "0.75rem" }}
+        >
+          ✨ 再次点击发光的卡片确认选择
         </motion.p>
       )}
     </div>
   );
 }
 
-// ═══════════════════════════════════════════════════════════
-// LEVEL 4 — 爱你 · Falling In Love
-// Interaction: Rhythm-based timing game — click heart exactly when it glows
-// Failure: early/late click → encouraging message + retry
-// ═══════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════
+// LEVEL 4 — 爱你 · Heartbeat Rhythm Game
+// Click the heart exactly when it glows bright (580ms window)
+// ══════════════════════════════════════════════════════════════
 function Level4({ onComplete, sfx }) {
-  const [phase, setPhase] = useState("idle"); // idle | beating | success
-  const [glow, setGlow] = useState(false);
-  const [msg, setMsg] = useState("");
+  const [phase, setPhase]     = useState("idle"); // idle | beating | success
+  const [glow, setGlow]       = useState(false);
+  const [msg, setMsg]         = useState("");
   const [attempts, setAttempts] = useState(0);
-  const glowOpen = useRef(false);
-  const timerRef = useRef(null);
+  const glowOpen              = useRef(false);
+  const timerRef              = useRef(null);
 
-  // ── Start / beat loop ──────────────────────────────────
-  const startBeat = useCallback(() => {
-    setPhase("beating");
-    doBeat();
-  }, []); // eslint-disable-line
-
-  const doBeat = () => {
+  const doBeat = useCallback(() => {
     timerRef.current = setTimeout(
       () => {
         setGlow(true);
         glowOpen.current = true;
         sfx.playBeat();
-
         setTimeout(() => {
           setGlow(false);
           glowOpen.current = false;
-          doBeat(); // recurse
+          doBeat();
         }, 580);
       },
       750 + Math.random() * 650
     );
-  };
+  }, [sfx]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const startBeat = useCallback(() => {
+    setPhase("beating");
+    doBeat();
+  }, [doBeat]);
+
+  // Clean up timers when unmounting
   useEffect(() => () => clearTimeout(timerRef.current), []);
 
   const handleClick = () => {
-    if (phase === "idle") {
-      startBeat();
-      return;
-    }
+    if (phase === "idle") { startBeat(); return; }
     if (phase !== "beating") return;
 
     if (glowOpen.current) {
-      // 🎉 Perfect sync
       clearTimeout(timerRef.current);
       setPhase("success");
       setMsg("💗 完美同步！我们的心跳一致~");
       sfx.playSuccess();
       setTimeout(onComplete, 1400);
     } else {
-      // ❌ Off-beat
       const n = attempts + 1;
       setAttempts(n);
       sfx.playError();
@@ -970,15 +1143,13 @@ function Level4({ onComplete, sfx }) {
 
   return (
     <div>
-      <motion.p initial={{ opacity: 0 }} animate={{ opacity: 0.45 }} style={styles.chapterLabel}>
+      <motion.p initial={{ opacity: 0 }} animate={{ opacity: 0.45 }} style={S.chapterLabel}>
         Chapter IV · 爱你
       </motion.p>
-
-      <motion.h2 initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} style={styles.heading}>
+      <motion.h2 initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} style={S.heading}>
         与心跳同频 💓
       </motion.h2>
-
-      <p style={{ ...styles.subtext, marginBottom: "1.4rem" }}>
+      <p style={{ ...S.subtext, marginBottom: "1.4rem" }}>
         {phase === "idle"
           ? "点击心脏，感受它的跳动节奏"
           : phase === "beating"
@@ -986,15 +1157,12 @@ function Level4({ onComplete, sfx }) {
           : "💗 心跳已同步，我们频率相同"}
       </p>
 
-      {/* Heart */}
       <div style={{ display: "flex", justifyContent: "center", marginBottom: "1.4rem" }}>
         <motion.button
           onClick={handleClick}
           animate={
             phase === "beating"
-              ? {
-                  scale: glow ? [1, 1.38, 1.1] : [1, 1.06, 1],
-                }
+              ? { scale: glow ? [1, 1.38, 1.1] : [1, 1.06, 1] }
               : phase === "success"
               ? { scale: [1, 1.5, 1.2] }
               : { scale: [1, 1.06, 1] }
@@ -1017,13 +1185,14 @@ function Level4({ onComplete, sfx }) {
             transition: "filter 0.14s ease",
             userSelect: "none",
             padding: 0,
+            touchAction: "manipulation",
           }}
         >
           {phase === "success" ? "💗" : "❤️"}
         </motion.button>
       </div>
 
-      {/* Rhythm wave indicator */}
+      {/* Rhythm wave */}
       {phase === "beating" && (
         <div style={{ display: "flex", justifyContent: "center", gap: "5px", marginBottom: "0.9rem" }}>
           {[0.5, 1.2, 2.5, 1.2, 0.5].map((h, i) => (
@@ -1075,14 +1244,14 @@ function Level4({ onComplete, sfx }) {
   );
 }
 
-// ═══════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════
 // FINAL LEVEL — 永远 · Spectacular Finale
-// Sequence: particles rise → heart forms → text reveal → ambient loop
-// Easter egg: tap anywhere to burst confetti
-// ═══════════════════════════════════════════════════════════
+// Sequence: [0] init → [1] heart forms → [2] text reveals → [3] ambient loop
+// Easter egg: tap anywhere to burst confetti at cursor position
+// ══════════════════════════════════════════════════════════════
 function FinalLevel() {
   const canvasRef = useRef(null);
-  const [seq, setSeq] = useState(0); // 0=init 1=heart 2=text 3=ambient
+  const [seq, setSeq] = useState(0);
 
   useEffect(() => {
     const t1 = setTimeout(() => setSeq(1), 700);
@@ -1091,75 +1260,68 @@ function FinalLevel() {
     return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
   }, []);
 
-  // Canvas heart particle system
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
 
     const resize = () => {
-      canvas.width = window.innerWidth;
+      canvas.width  = window.innerWidth;
       canvas.height = window.innerHeight;
     };
     resize();
     window.addEventListener("resize", resize);
 
     const particles = Array.from({ length: 220 }, (_, i) => ({
-      t: (i / 220) * Math.PI * 2,
-      size: Math.random() * 2.5 + 0.8,
+      t:     (i / 220) * Math.PI * 2,
+      size:  Math.random() * 2.5 + 0.8,
       speed: 0.004 + Math.random() * 0.012,
-      hue: 325 + Math.random() * 40,
+      hue:   325 + Math.random() * 40,
       alpha: Math.random() * 0.5 + 0.5,
     }));
 
-    const floaters = Array.from({ length: 25 }, () => ({
-      x: Math.random() * window.innerWidth,
-      y: window.innerHeight + Math.random() * 150,
-      size: 10 + Math.random() * 14,
+    const floaters = Array.from({ length: 28 }, () => ({
+      x:     Math.random() * window.innerWidth,
+      y:     window.innerHeight + Math.random() * 150,
+      size:  10 + Math.random() * 14,
       speed: 0.45 + Math.random() * 0.9,
       drift: (Math.random() - 0.5) * 0.4,
     }));
 
-    let startTime = Date.now();
+    const startTime = Date.now();
     let raf;
 
     const draw = () => {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      const cx = canvas.width / 2;
-      const cy = canvas.height / 2 + 30;
+      const cx      = canvas.width / 2;
+      const cy      = canvas.height / 2 + 30;
       const elapsed = (Date.now() - startTime) / 1000;
+      const scale   = seq >= 1 ? Math.min(1, elapsed * 0.55) : 0;
+      const pulse   = 1 + Math.sin(elapsed * 1.8) * 0.04;
 
-      // Scale in heart over 2 seconds
-      const scale = seq >= 1 ? Math.min(1, elapsed * 0.55) : 0;
-      const pulse = 1 + Math.sin(elapsed * 1.8) * 0.04;
-
+      // Heart particle cloud
       particles.forEach((p, idx) => {
         p.t += p.speed;
-        const hx = 16 * Math.pow(Math.sin(p.t), 3) * 14 * scale * pulse;
-        const hy =
-          -(
-            13 * Math.cos(p.t) -
-            5 * Math.cos(2 * p.t) -
-            2 * Math.cos(3 * p.t) -
-            Math.cos(4 * p.t)
-          ) *
-          14 *
-          scale *
-          pulse;
+        const hx =  16 * Math.pow(Math.sin(p.t), 3) * 14 * scale * pulse;
+        const hy = -(
+          13 * Math.cos(p.t) -
+           5 * Math.cos(2 * p.t) -
+           2 * Math.cos(3 * p.t) -
+               Math.cos(4 * p.t)
+        ) * 14 * scale * pulse;
         const alpha = seq >= 1 ? Math.min(p.alpha, elapsed * 0.65) : 0;
+
         ctx.fillStyle = `hsla(${p.hue},82%,72%,${alpha})`;
         ctx.beginPath();
         ctx.arc(
           cx + hx + Math.sin(elapsed * 0.8 + idx) * 1.8,
           cy + hy,
-          p.size,
-          0,
-          Math.PI * 2
+          p.size, 0, Math.PI * 2
         );
         ctx.fill();
       });
 
-      // Ambient rising hearts (seq 3)
+      // Ambient floating hearts (seq ≥ 3)
       if (seq >= 3) {
         floaters.forEach((h) => {
           h.y -= h.speed;
@@ -1181,24 +1343,23 @@ function FinalLevel() {
 
     draw();
 
-    // Confetti bursts
-    setTimeout(
-      () =>
-        confetti({
-          particleCount: 140,
-          spread: 80,
-          origin: { y: 0.62 },
-          colors: ["#ff7675", "#fd79a8", "#fab1a0", "#ffeaa7"],
-        }),
+    // Confetti bursts — staggered for drama
+    const c1 = setTimeout(
+      () => confetti({
+        particleCount: 140, spread: 80, origin: { y: 0.62 },
+        colors: ["#ff7675", "#fd79a8", "#fab1a0", "#ffeaa7"],
+      }),
       600
     );
-    setTimeout(() => {
-      confetti({ particleCount: 70, spread: 120, angle: 60, origin: { x: 0, y: 0.68 }, colors: ["#a29bfe", "#fd79a8"] });
+    const c2 = setTimeout(() => {
+      confetti({ particleCount: 70, spread: 120, angle:  60, origin: { x: 0, y: 0.68 }, colors: ["#a29bfe", "#fd79a8"] });
       confetti({ particleCount: 70, spread: 120, angle: 120, origin: { x: 1, y: 0.68 }, colors: ["#a29bfe", "#fd79a8"] });
     }, 1600);
 
     return () => {
       cancelAnimationFrame(raf);
+      clearTimeout(c1);
+      clearTimeout(c2);
       window.removeEventListener("resize", resize);
     };
   }, [seq]);
@@ -1208,10 +1369,7 @@ function FinalLevel() {
     confetti({
       particleCount: 55,
       spread: 65,
-      origin: {
-        x: e.clientX / window.innerWidth,
-        y: e.clientY / window.innerHeight,
-      },
+      origin: { x: e.clientX / window.innerWidth, y: e.clientY / window.innerHeight },
       colors: ["#ff7675", "#fd79a8", "#ffeaa7", "#a29bfe"],
     });
   };
@@ -1225,7 +1383,6 @@ function FinalLevel() {
 
       <div style={{ zIndex: 10, textAlign: "center", pointerEvents: "none", padding: "0 20px" }}>
 
-        {/* Names — appears at seq 2 */}
         <AnimatePresence>
           {seq >= 2 && (
             <motion.h1
@@ -1248,7 +1405,6 @@ function FinalLevel() {
           )}
         </AnimatePresence>
 
-        {/* 520 label */}
         <AnimatePresence>
           {seq >= 2 && (
             <motion.p
@@ -1268,7 +1424,6 @@ function FinalLevel() {
           )}
         </AnimatePresence>
 
-        {/* Message + ambient hint — seq 3 */}
         <AnimatePresence>
           {seq >= 3 && (
             <motion.div
@@ -1295,7 +1450,6 @@ function FinalLevel() {
                 都有我参与其中。"
               </motion.p>
 
-              {/* Tap easter-egg hint — fades in and out subtly */}
               <motion.p
                 initial={{ opacity: 0 }}
                 animate={{ opacity: [0, 0.28, 0] }}
@@ -1318,10 +1472,10 @@ function FinalLevel() {
   );
 }
 
-// ═══════════════════════════════════════════════════════════
-// SHARED STYLES
-// ═══════════════════════════════════════════════════════════
-const styles = {
+// ══════════════════════════════════════════════════════════════
+// SHARED STYLE CONSTANTS
+// ══════════════════════════════════════════════════════════════
+const S = {
   chapterLabel: {
     fontSize: "0.72rem",
     letterSpacing: "3.5px",
@@ -1342,25 +1496,65 @@ const styles = {
     fontSize: "clamp(0.82rem, 2.5vw, 0.94rem)",
     marginBottom: "1.3rem",
   },
+  // Glassmorphism card — shared across levels 1–4
+  glassCard: (level) => ({
+    background:      level === 5 ? "transparent" : "rgba(255,255,255,0.76)",
+    backdropFilter:  level === 5 ? "none"        : "blur(24px)",
+    WebkitBackdropFilter: level === 5 ? "none"   : "blur(24px)",
+    padding:         level === 5 ? 0 : "clamp(1.6rem, 5vw, 2.5rem) clamp(1.4rem, 5vw, 2.2rem)",
+    borderRadius:    level === 5 ? 0 : "36px",
+    boxShadow:       level === 5 ? "none" : "0 28px 72px rgba(0,0,0,0.13), 0 1px 0 rgba(255,255,255,0.8) inset",
+    border:          level === 5 ? "none" : "1.5px solid rgba(255,255,255,0.52)",
+    textAlign:       "center",
+    maxWidth:        level === 5 ? "100vw" : "min(420px, 92vw)",
+    width:           level === 5 ? "100vw" : "92vw",
+    maxHeight:       level === 5 ? "100dvh" : "88dvh",
+    overflowY:       level === 5 ? "visible" : "auto",
+    zIndex:          10,
+    position:        "relative",
+  }),
 };
 
-// ═══════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════
 // ROOT APP
-// ═══════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════
 export default function App() {
-  const [level, setLevel] = useState(1);
+  const [level, setLevel]           = useState(1);
   const [showChapter, setShowChapter] = useState(false);
-  const [soundOn, setSoundOn] = useState(false);
-  const [logoTaps, setLogoTaps] = useState(0);
-  const sfx = useSoundEngine();
+  const [soundOn, setSoundOn]       = useState(false);
+  const [logoTaps, setLogoTaps]     = useState(0);
 
-  // Wrap sfx so it only fires when soundOn
+  const sfx      = useSoundEngine();
+  const audioRef = useRef(null); // HTML5 background music player
+
+  // ── Sound-gated SFX wrapper ────────────────────────────────
+  // All sfx calls pass through here; music is also controlled here.
   const gated = {
-    playSuccess: () => soundOn && sfx.playSuccess(),
-    playError: () => soundOn && sfx.playError(),
-    playClick: () => soundOn && sfx.playClick(),
-    playHover: () => soundOn && sfx.playHover(),
-    playBeat: () => soundOn && sfx.playBeat(),
+    playSuccess:   () => soundOn && sfx.playSuccess(),
+    playError:     () => soundOn && sfx.playError(),
+    playClick:     () => soundOn && sfx.playClick(),
+    playHover:     () => soundOn && sfx.playHover(),
+    playBeat:      () => soundOn && sfx.playBeat(),
+    playStarCatch: (n) => soundOn && sfx.playStarCatch(n),
+    playPrimed:    () => soundOn && sfx.playPrimed(),
+  };
+
+  // ── Background music: starts on the click that turns sound ON ──
+  // Browsers allow audio.play() only inside a direct user gesture.
+  // Clicking the toggle IS that gesture, so we can call play() right here.
+  const toggleSound = () => {
+    const next = !soundOn;
+    setSoundOn(next);
+    if (audioRef.current) {
+      if (next) {
+        audioRef.current.play().catch(() => {
+          // Autoplay blocked — user will need to interact again.
+          // This rarely happens since the button click IS the interaction.
+        });
+      } else {
+        audioRef.current.pause();
+      }
+    }
   };
 
   const handleComplete = () => {
@@ -1372,7 +1566,7 @@ export default function App() {
     setLevel((l) => l + 1);
   };
 
-  // 🥚 Logo tap easter egg — 5 taps = confetti
+  // 🥚 Logo easter egg — tap 5× for confetti shower
   const handleLogoTap = () => {
     const n = logoTaps + 1;
     setLogoTaps(n);
@@ -1386,7 +1580,7 @@ export default function App() {
     <div
       style={{
         width: "100vw",
-        height: "100dvh",
+        height: "100dvh", // dvh accounts for iOS Safari / Android Chrome toolbars
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
@@ -1398,10 +1592,35 @@ export default function App() {
         fontFamily: "'Outfit', sans-serif",
       }}
     >
-      {/* ── Ambient floating particles (levels 1–4) ── */}
-      {level < 5 && <AmbientParticles colors={PARTICLES[level]} />}
+      {/*
+        ════════════════════════════════════════════════════════
+        🎵 BACKGROUND MUSIC
+        ────────────────────────────────────────────────────────
+        Replace the empty src below with a direct link to your
+        preferred music file. Supported formats: mp3, ogg, wav.
 
-      {/* ── Progress dots ── */}
+        Recommended: a soft, romantic instrumental track.
+
+        Examples:
+          src="https://your-cdn.com/love-theme.mp3"
+          src="/music/520-theme.mp3"   ← place file in /public/music/
+
+        The track starts playing automatically when the user
+        turns on sound via the 🔊 button (top-right corner).
+        It loops infinitely and pauses when muted.
+        ════════════════════════════════════════════════════════
+      */}
+      <audio
+        ref={audioRef}
+        loop
+        preload="none"
+        src="" /* ← REPLACE WITH YOUR MUSIC URL */
+      />
+
+      {/* ── Ambient emoji particles (levels 1–4 only) ── */}
+      {level < 5 && <AmbientParticles level={level} />}
+
+      {/* ── Progress dots (levels 1–4) ── */}
       {level < 5 && (
         <div
           style={{
@@ -1431,21 +1650,21 @@ export default function App() {
         </div>
       )}
 
-      {/* ── Sound toggle ── */}
+      {/* ── Sound / Music toggle (top-right) ── */}
       <motion.button
-        onClick={() => setSoundOn((s) => !s)}
+        onClick={toggleSound}
         whileHover={{ scale: 1.12 }}
         whileTap={{ scale: 0.88 }}
+        title={soundOn ? "关闭音效和音乐" : "开启音效和音乐"}
         style={{
           position: "absolute",
-          top: 18,
-          right: 18,
+          top: 18, right: 18,
           background: "rgba(255,255,255,0.22)",
           backdropFilter: "blur(12px)",
+          WebkitBackdropFilter: "blur(12px)",
           border: "1px solid rgba(255,255,255,0.3)",
           borderRadius: "50%",
-          width: 44,
-          height: 44,
+          width: 44, height: 44,
           cursor: "pointer",
           zIndex: 100,
           display: "flex",
@@ -1454,20 +1673,20 @@ export default function App() {
           fontSize: "1.15rem",
           boxShadow: "0 4px 14px rgba(0,0,0,0.08)",
           fontFamily: "inherit",
+          touchAction: "manipulation",
         }}
       >
         {soundOn ? "🔊" : "🔇"}
       </motion.button>
 
-      {/* ── Logo easter egg (top-left, 5 taps) ── */}
+      {/* ── Logo easter egg: tap 5× (top-left) ── */}
       {level < 5 && (
         <motion.button
           onClick={handleLogoTap}
           whileHover={{ scale: 1.2, rotate: 10 }}
           style={{
             position: "absolute",
-            top: 18,
-            left: 18,
+            top: 18, left: 18,
             background: "none",
             border: "none",
             cursor: "pointer",
@@ -1477,6 +1696,7 @@ export default function App() {
             userSelect: "none",
             fontFamily: "inherit",
             padding: 4,
+            touchAction: "manipulation",
           }}
         >
           💕
@@ -1504,27 +1724,20 @@ export default function App() {
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 1.04, y: -42 }}
             transition={{ type: "spring", damping: 22, stiffness: 210 }}
-            style={{
-              background:
-                level === 5 ? "transparent" : "rgba(255,255,255,0.76)",
-              backdropFilter: level === 5 ? "none" : "blur(22px)",
-              padding: level === 5 ? 0 : "clamp(1.6rem, 5vw, 2.5rem) clamp(1.4rem, 5vw, 2.2rem)",
-              borderRadius: level === 5 ? 0 : "36px",
-              boxShadow:
-                level === 5
-                  ? "none"
-                  : "0 28px 72px rgba(0,0,0,0.13), 0 1px 0 rgba(255,255,255,0.8) inset",
-              border: level === 5 ? "none" : "1.5px solid rgba(255,255,255,0.52)",
-              textAlign: "center",
-              maxWidth: level === 5 ? "100vw" : "min(420px, 92vw)",
-              width: level === 5 ? "100vw" : "92vw",
-              maxHeight: level === 5 ? "100dvh" : "88dvh",
-              overflowY: level === 5 ? "visible" : "auto",
-              zIndex: 10,
-              position: "relative",
-            }}
+            style={S.glassCard(level)}
           >
-            {level === 1 && <Level1 onComplete={handleComplete} sfx={gated} />}
+            {level === 1 && (
+              <Level1
+                onComplete={handleComplete}
+                sfx={gated}
+                onFirstInteraction={() => {
+                  // If user already enabled sound before reaching this point
+                  if (soundOn && audioRef.current?.paused) {
+                    audioRef.current.play().catch(() => {});
+                  }
+                }}
+              />
+            )}
             {level === 2 && <Level2 onComplete={handleComplete} sfx={gated} />}
             {level === 3 && <Level3 onComplete={handleComplete} sfx={gated} />}
             {level === 4 && <Level4 onComplete={handleComplete} sfx={gated} />}
