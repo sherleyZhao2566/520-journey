@@ -489,7 +489,7 @@ function Level1({ onComplete, sfx, onFirstInteraction }) {
             🎉 <b>发现彩蛋！</b>
             <br />
             <span style={{ fontSize: "0.82rem" }}>
-              可爱的猪宝宝520快乐 💕 继续输入真正的密语哦~
+              可爱的猪宝宝 520快乐 💕 继续输入真正的密语哦~
             </span>
           </motion.div>
         )}
